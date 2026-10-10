@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
+import PeopleInvitations from "./PeopleInvitations";
 
 type OrganizationRole =
   | "owner"
@@ -246,6 +247,128 @@ function App() {
       active = false;
     };
   }, [session]);
+
+  useEffect(() => {
+  if (!session) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const invitationId = params.get("invitation_id");
+
+  if (!invitationId) return;
+
+  let active = true;
+
+  async function acceptInvitation() {
+    setBusy(true);
+    setError("");
+    setMessage("Processing your organization invitation...");
+
+    try {
+      const {
+        data: { session: currentSession },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) throw sessionError;
+
+      if (
+        !currentSession?.access_token ||
+        currentSession.user.id !== session?.user?.id
+      ) {
+        throw new Error("Please sign in again to accept this invitation.");
+      }
+
+      const { data, error: acceptError } =
+        await supabase.functions.invoke("accept-organization-invitation", {
+          body: { invitation_id: invitationId },
+          headers: {
+            Authorization: `Bearer ${currentSession.access_token}`,
+          },
+        });
+
+      if (acceptError) {
+        let details = acceptError.message;
+
+        try {
+          const response = await acceptError.context?.json();
+          if (response?.error) details = response.error;
+        } catch {
+          // Keep the original error message.
+        }
+
+        throw new Error(details);
+      }
+
+      if (data?.error) throw new Error(data.error);
+      if (!data?.success || !data?.organization_id) {
+        throw new Error("The invitation could not be confirmed.");
+      }
+
+      const { data: orgData, error: orgError } = await supabase
+        .from("organizations")
+        .select("id, name")
+        .eq("id", data.organization_id)
+        .single();
+
+      if (orgError) throw orgError;
+
+      const { data: membership, error: membershipError } = await supabase
+        .from("organization_members")
+        .select("role, status")
+        .eq("organization_id", data.organization_id)
+        .eq("user_id", currentSession.user.id)
+        .eq("status", "active")
+        .single();
+
+      if (membershipError) throw membershipError;
+
+      if (!active) return;
+
+      if (!validOrganizationRoles.includes(membership.role as OrganizationRole)) {
+        throw new Error("The organization membership role is invalid.");
+      }
+
+      setOrganizations((current) => {
+        const updated: Organization = {
+          id: orgData.id,
+          name: orgData.name,
+          role: membership.role as OrganizationRole,
+        };
+
+        return [
+          updated,
+          ...current.filter((org) => org.id !== updated.id),
+        ];
+      });
+
+      setSelectedOrganizationId(orgData.id);
+      setWorkspaceSection("Dashboard");
+      setMessage(`You have joined ${orgData.name}.`);
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname + window.location.hash,
+      );
+    } catch (caughtError: unknown) {
+      if (!active) return;
+
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Could not accept the organization invitation.",
+      );
+      setMessage("");
+    } finally {
+      if (active) setBusy(false);
+    }
+  }
+
+  void acceptInvitation();
+
+  return () => {
+    active = false;
+  };
+}, [session?.user.id]);
 
   async function handleAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -824,13 +947,19 @@ function App() {
                         color: "#166534",
                       }}
                     >
-                      Welcome to {selectedOrganization.name}. Your workspace
-                      foundation is ready.
+                      Welcome to {selectedOrganization.name}. Your workspace foundation is
+                      ready.
                     </div>
-                  ) : (
+                    ) : workspaceSection === "People" ? (
+                      <PeopleInvitations
+                        organizationId={selectedOrganization.id}
+                        organizationName={selectedOrganization.name}
+                        role={selectedOrganization.role}
+                      />
+                    ) : (
                     <p style={{ fontSize: 13, color: "#94A3B8" }}>
-                      This module is a navigation placeholder and will be
-                      implemented in a later build step.
+                      This module is a navigation placeholder and will be implemented in a
+                      later build step.
                     </p>
                   )}
                 </div>
