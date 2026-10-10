@@ -228,36 +228,47 @@ async function handleCreateOrganization(
       );
     }
 
-    const { data, error: createError } = await supabase
-      .rpc("create_organization", {
-        p_name: trimmedName,
-      })
-      .single();
+const { data, error: createError } = await supabase
+  .rpc("create_organization", {
+    p_name: trimmedName,
+  })
+  .single();
 
-    if (createError) {
-      console.error("Forge organisation creation error:", {
-        code: createError.code,
-        message: createError.message,
-        details: createError.details,
-        hint: createError.hint,
-      });
+if (createError) {
+  console.error("Forge organisation creation error:", {
+    code: createError.code,
+    message: createError.message,
+    details: createError.details,
+    hint: createError.hint,
+  });
 
-      throw new Error(
-        `Could not create organisation: ${createError.message} (code: ${createError.code})`,
-      );
-    }
+  throw new Error(
+    `Could not create organisation: ${createError.message} (code: ${createError.code})`,
+  );
+}
 
-    if (!data) {
-      throw new Error("The database did not return the new organisation.");
-    }
+if (!data) {
+  throw new Error("The database did not return the new organisation.");
+}
 
-    setOrganizations((current) => [
-      ...current,
-      { id: data.id, name: data.name },
-    ]);
+// Validate the RPC result before using it.
+const result = data as { id: string; name: string };
 
-    setOrganizationName("");
-    setMessage(`Organisation "${data.name}" created successfully.`);
+if (
+  typeof result.id !== "string" ||
+  typeof result.name !== "string"
+) {
+  throw new Error("The database returned an invalid organisation.");
+}
+
+setOrganizations((current) => [
+  ...current,
+  { id: result.id, name: result.name },
+]);
+
+setOrganizationName("");
+setMessage(`Organisation "${result.name}" created successfully.`);
+
   } catch (caughtError: unknown) {
     const errorMessage =
       caughtError instanceof Error
